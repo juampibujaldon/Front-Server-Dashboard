@@ -1,0 +1,44 @@
+.wrapper {
+  margin: 4rem auto;
+  max-width: 480px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 2.5rem;
+  border-radius: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.icon {
+  font-size: 2.2rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.description {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.button {
+  align-self: center;
+  padding: 0.7rem 1.8rem;
+  border-radius: 999px;
+  border: none;
+  background: rgba(76, 217, 100, 0.2);
+  color: #6fde8b;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.button:hover {
+  transform: translateY(-1px);
+  background: rgba(76, 217, 100, 0.3);
+}
+
