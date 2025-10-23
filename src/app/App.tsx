@@ -1,47 +1,33 @@
-﻿import { useMemo } from 'react';
-import { ServerGrid } from '../components/ServerCard/ServerGrid';
-import { EmptyState } from '../components/ServerCard/EmptyState';
-import { PageHeader } from '../components/ServerCard/PageHeader';
-import { useServerMetrics } from '../hooks/useServerMetrics';
+import { useEffect } from 'react';
+import { ServerHealthDashboard } from '../features/server-health/components/ServerHealthDashboard';
+
+const syncPreferredScheme = () => {
+  if (typeof window === 'undefined') return;
+  const root = document.documentElement;
+  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+  const apply = (event: MediaQueryList | MediaQueryListEvent) => {
+    const matches = 'matches' in event ? event.matches : mediaQuery.matches;
+    root.classList.toggle('dark', matches);
+  };
+
+  apply(mediaQuery);
+  mediaQuery.addEventListener('change', apply);
+
+  return () => {
+    mediaQuery.removeEventListener('change', apply);
+  };
+};
 
 function App() {
-  const { data, isLoading, isError, refetch, isFetching } = useServerMetrics();
+  useEffect(() => {
+    const cleanup = syncPreferredScheme();
+    return () => {
+      cleanup?.();
+    };
+  }, []);
 
-  const showEmptyState = useMemo(
-    () => !isLoading && !isError && (data?.length ?? 0) === 0,
-    [data, isError, isLoading],
-  );
-
-  return (
-    <div className="app-shell">
-      <PageHeader onRefresh={() => { void refetch(); }} isRefreshing={isFetching} />
-
-      {isError && (
-        <EmptyState
-          title="No pudimos obtener las métricas"
-          description="Revisa que el backend esté en ejecución y responde en el endpoint /api/metrics"
-          actionLabel="Reintentar"
-          onAction={() => { void refetch(); }}
-        />
-      )}
-
-      {isLoading && !isError && (
-        <EmptyState
-          title="Cargando métricas"
-          description="Buscando la información de los agentes"
-        />
-      )}
-
-      {showEmptyState && (
-        <EmptyState
-          title="Sin servidores monitoreados"
-          description="Aún no se registraron métricas para los servidores configurados"
-        />
-      )}
-
-      {!showEmptyState && !isError && <ServerGrid servers={data ?? []} />}
-    </div>
-  );
+  return <ServerHealthDashboard />;
 }
 
 export default App;
