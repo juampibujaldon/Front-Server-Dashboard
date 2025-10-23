@@ -72,7 +72,7 @@ export const ServerHealthDashboard = () => {
     return latestMetricMap.get(selectedServerId) ?? fallback;
   }, [latestMetricMap, selectedServerId, serverIds]);
 
-  const chartData = selectedServerId ? historyByServer[selectedServerId] ?? [] : [];
+  const chartHistory = selectedServerId ? historyByServer[selectedServerId] ?? [] : [];
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-5 py-10">
@@ -188,7 +188,7 @@ export const ServerHealthDashboard = () => {
           )}
         </div>
 
-        <MetricTrendChart data={chartData} isLoading={isLoading && chartData.length === 0} />
+        <MetricTrendChart history={chartHistory} isLoading={isLoading && chartHistory.length === 0} />
       </section>
     </main>
   );

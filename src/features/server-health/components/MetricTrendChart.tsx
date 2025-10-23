@@ -1,151 +1,142 @@
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { ServerMetricPoint } from '../types';
 
 type MetricTrendChartProps = {
-  data: ServerMetricPoint[];
+  history: ServerMetricPoint[];
   isLoading: boolean;
 };
 
-const formatTime = (iso: string) => {
-  try {
-    return new Date(iso).toLocaleTimeString('es-AR', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
+type SeriesConfig = {
+  key: keyof Pick<ServerMetricPoint, 'cpu_usage' | 'ram_usage' | 'disk_space' | 'temperature'>;
+  label: string;
+  unit: string;
+  gradientId: string;
+  stroke: string;
 };
 
-const formatYAxis = (value: number) => `${value.toFixed(0)}%`;
+const SERIES: SeriesConfig[] = [
+  {
+    key: 'cpu_usage',
+    label: 'CPU',
+    unit: '%',
+    gradientId: 'gradientCpu',
+    stroke: '#0ea5e9',
+  },
+  {
+    key: 'ram_usage',
+    label: 'RAM',
+    unit: '%',
+    gradientId: 'gradientRam',
+    stroke: '#22d3ee',
+  },
+  {
+    key: 'disk_space',
+    label: 'Disco',
+    unit: '%',
+    gradientId: 'gradientDisk',
+    stroke: '#38bdf8',
+  },
+  {
+    key: 'temperature',
+    label: 'Temperatura',
+    unit: '°C',
+    gradientId: 'gradientTemp',
+    stroke: '#f97316',
+  },
+];
 
-const buildChartData = (points: ServerMetricPoint[]) =>
-  points
+const buildSeriesData = (history: ServerMetricPoint[]) =>
+  history
     .slice()
     .sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt))
-    .map((point) => ({
-      time: formatTime(point.observedAt),
-      cpu: Number(point.cpu_usage ?? 0),
-      ram: Number(point.ram_usage ?? 0),
+    .map((point, index) => ({
+      muestra: index + 1,
+      cpu_usage: Number(point.cpu_usage ?? 0),
+      ram_usage: Number(point.ram_usage ?? 0),
+      disk_space: Number(point.disk_space ?? 0),
       temperature: Number(point.temperature ?? 0),
     }));
 
-export const MetricTrendChart = ({ data, isLoading }: MetricTrendChartProps) => {
+const formatValue = (value: number, unit: string) => `${Number(value).toFixed(1)}${unit}`;
+
+const ChartSkeleton = ({ label }: { label: string }) => (
+  <div className="flex h-80 w-full flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200/60 bg-white/70 p-6 text-center dark:border-slate-800/60 dark:bg-slate-900/60">
+    <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">{label}</p>
+    <p className="text-xs text-slate-500 dark:text-slate-400">Esperando lecturas del agente…</p>
+  </div>
+);
+
+export const MetricTrendChart = ({ history, isLoading }: MetricTrendChartProps) => {
   if (isLoading) {
     return (
-      <div className="flex h-80 w-full items-center justify-center rounded-2xl border border-slate-200/60 bg-white/70 dark:border-slate-800/60 dark:bg-slate-900/60">
-        <p className="text-sm text-slate-500 dark:text-slate-400">Cargando histórico de métricas…</p>
+      <div className="grid gap-4 md:grid-cols-2">
+        {SERIES.map((series) => (
+          <ChartSkeleton key={series.key} label={`Cargando ${series.label}…`} />
+        ))}
       </div>
     );
   }
 
-  if (data.length === 0) {
+  if (history.length === 0) {
     return (
       <div className="flex h-80 w-full items-center justify-center rounded-2xl border border-dashed border-slate-300 dark:border-slate-800">
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Aún no hay suficiente historial para graficar. Mantén el agente enviando métricas.
+          Necesitamos algunas muestras para graficar. Mantén el agente enviando datos.
         </p>
       </div>
     );
   }
 
-  const chartData = buildChartData(data);
-  const shouldShowDots = chartData.length <= 1;
+  const data = buildSeriesData(history);
 
   return (
-    <div className="h-80 w-full rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-slate-800/60 dark:bg-slate-900/70">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={chartData} margin={{ left: 12, right: 12, top: 16, bottom: 8 }}>
-          <defs>
-            <linearGradient id="cpuGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.65} />
-              <stop offset="95%" stopColor="#38bdf8" stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="ramGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.65} />
-              <stop offset="95%" stopColor="#22d3ee" stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="tempGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#fb7185" stopOpacity={0.65} />
-              <stop offset="95%" stopColor="#fb7185" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-slate-800" />
-          <XAxis dataKey="time" stroke="currentColor" fontSize={12} />
-          <YAxis stroke="currentColor" fontSize={12} tickFormatter={formatYAxis} />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: 'rgba(15,23,42,0.92)',
-              borderRadius: '0.75rem',
-              border: '1px solid rgba(148,163,184,0.2)',
-              color: 'white',
-            }}
-            labelStyle={{ color: '#94a3b8' }}
-            formatter={(value: number, name) => {
-              const label = translateSeriesName(name);
-              const suffix = label.includes('Temperatura') ? '°C' : '%';
-              return [`${Number(value).toFixed(1)}${suffix}`, label];
-            }}
-          />
-          <Legend
-            formatter={(value) => translateSeriesName(value)}
-            wrapperStyle={{ paddingTop: 12 }}
-            iconType="circle"
-          />
-          <Area
-            type="monotone"
-            dataKey="cpu"
-            name="cpu"
-            stroke="#0ea5e9"
-            fill="url(#cpuGradient)"
-            strokeWidth={2.5}
-            dot={shouldShowDots}
-          />
-          <Area
-            type="monotone"
-            dataKey="ram"
-            name="ram"
-            stroke="#22d3ee"
-            fill="url(#ramGradient)"
-            strokeWidth={2.5}
-            dot={shouldShowDots}
-          />
-          <Area
-            type="monotone"
-            dataKey="temperature"
-            name="temperature"
-            stroke="#f43f5e"
-            fill="url(#tempGradient)"
-            strokeWidth={2.5}
-            dot={shouldShowDots}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
+    <div className="grid gap-4 md:grid-cols-2">
+      {SERIES.map((series) => (
+        <div
+          key={series.key}
+          className="h-80 w-full rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-slate-800/60 dark:bg-slate-900/70"
+        >
+          <header className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            <span>{series.label}</span>
+            <span className="rounded-full bg-slate-200/50 px-2 py-0.5 text-[0.65rem] text-slate-500 dark:bg-slate-800/60 dark:text-slate-300">
+              refresco 30s
+            </span>
+          </header>
+          <ResponsiveContainer width="100%" height="90%">
+            <AreaChart data={data} margin={{ left: 10, right: 10, top: 10, bottom: 8 }}>
+              <defs>
+                <linearGradient id={series.gradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={series.stroke} stopOpacity={0.55} />
+                  <stop offset="95%" stopColor={series.stroke} stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-slate-800" />
+              <XAxis dataKey="muestra" stroke="currentColor" fontSize={11} tickFormatter={(value) => `M${value}`} />
+              <YAxis stroke="currentColor" fontSize={11} tickFormatter={(value) => `${value}`} />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: 'rgba(15,23,42,0.92)',
+                  borderRadius: '0.75rem',
+                  border: '1px solid rgba(148,163,184,0.2)',
+                  color: 'white',
+                }}
+                labelStyle={{ color: '#94a3b8' }}
+                formatter={(value: number) => formatValue(value, series.unit)}
+                labelFormatter={(value: number) => `Muestra ${value}`}
+              />
+              <Area
+                type="monotone"
+                dataKey={series.key}
+                stroke={series.stroke}
+                fill={`url(#${series.gradientId})`}
+                strokeWidth={2.2}
+                dot={data.length <= 1}
+                activeDot={{ r: 5, strokeWidth: 0 }}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      ))}
     </div>
   );
-};
-
-const translateSeriesName = (name: string | number) => {
-  const label = typeof name === 'string' ? name : String(name);
-
-  switch (label) {
-    case 'cpu':
-      return 'CPU (%)';
-    case 'ram':
-      return 'RAM (%)';
-    case 'temperature':
-      return 'Temperatura (°C)';
-    default:
-      return label;
-  }
 };

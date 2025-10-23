@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ServerMetric, ServerMetricPoint } from '../types';
 
-const STORAGE_KEY = 'server-health-history-v2';
+const STORAGE_KEY = 'server-health-history-v3';
 
 type StoredHistory = {
   lastUpdatedAt?: string;
@@ -10,46 +10,6 @@ type StoredHistory = {
 
 const getObservedAt = (metric: ServerMetric, fallback: string) =>
   metric.timestamp ?? metric.collected_at ?? metric.updated_at ?? metric.created_at ?? fallback;
-
-const buildHistory = (metrics: ServerMetric[], fallbackTimestamp: string): StoredHistory => {
-  const historyByServer = metrics.reduce<Record<string, ServerMetricPoint[]>>((acc, metric) => {
-    const serverId = metric.server_id;
-    const observedAt = getObservedAt(metric, fallbackTimestamp);
-    const entry: ServerMetricPoint = {
-      ...metric,
-      observedAt,
-    };
-
-    const existing = acc[serverId] ? [...acc[serverId]] : [];
-    const replacedIndex = existing.findIndex((item) => item.observedAt === observedAt);
-
-    if (replacedIndex >= 0) {
-      existing[replacedIndex] = entry;
-    } else {
-      existing.push(entry);
-    }
-
-    existing.sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt));
-
-    acc[serverId] = existing;
-    return acc;
-  }, {});
-
-  const newestTimestamp = Object.values(historyByServer)
-    .flat()
-    .reduce<string | undefined>((latest, entry) => {
-      const currentTs = Date.parse(entry.observedAt);
-      if (Number.isNaN(currentTs)) {
-        return latest;
-      }
-      if (!latest) {
-        return entry.observedAt;
-      }
-      return Date.parse(latest) < currentTs ? entry.observedAt : latest;
-    }, undefined);
-
-  return { historyByServer, lastUpdatedAt: newestTimestamp ?? fallbackTimestamp };
-};
 
 const readFromStorage = (): StoredHistory => {
   if (typeof window === 'undefined') {
@@ -99,6 +59,48 @@ const writeToStorage = (payload: StoredHistory) => {
   }
 };
 
+const mergeHistory = (
+  previous: Record<string, ServerMetricPoint[]>,
+  metrics: ServerMetric[],
+  fallbackTimestamp: string,
+) => {
+  const next = { ...previous };
+  let newest = fallbackTimestamp;
+
+  metrics.forEach((metric) => {
+    const observedAt = getObservedAt(metric, fallbackTimestamp);
+    const entry: ServerMetricPoint = {
+      ...metric,
+      observedAt,
+    };
+
+    const history = next[metric.server_id] ? [...next[metric.server_id]] : [];
+
+    const duplicateIndex = history.findIndex(
+      (point) => point.id === entry.id || point.observedAt === entry.observedAt,
+    );
+
+    if (duplicateIndex >= 0) {
+      history[duplicateIndex] = entry;
+    } else {
+      history.push(entry);
+    }
+
+    history.sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt));
+    next[metric.server_id] = history;
+
+    const observedMs = Date.parse(entry.observedAt);
+    if (!Number.isNaN(observedMs)) {
+      const newestMs = Date.parse(newest);
+      if (Number.isNaN(newestMs) || observedMs > newestMs) {
+        newest = new Date(observedMs).toISOString();
+      }
+    }
+  });
+
+  return { historyByServer: next, lastUpdatedAt: newest };
+};
+
 export const useMetricHistory = (metrics: ServerMetric[] | undefined) => {
   const cached = useMemo(readFromStorage, []);
   const [historyByServer, setHistoryByServer] = useState<Record<string, ServerMetricPoint[]>>(
@@ -112,11 +114,12 @@ export const useMetricHistory = (metrics: ServerMetric[] | undefined) => {
     }
 
     const fallbackTimestamp = new Date().toISOString();
-    const snapshot = buildHistory(metrics, fallbackTimestamp);
-
-    setHistoryByServer(snapshot.historyByServer);
-    setLastUpdatedAt(snapshot.lastUpdatedAt);
-    writeToStorage(snapshot);
+    setHistoryByServer((previous) => {
+      const snapshot = mergeHistory(previous, metrics, fallbackTimestamp);
+      setLastUpdatedAt(snapshot.lastUpdatedAt);
+      writeToStorage(snapshot);
+      return snapshot.historyByServer;
+    });
   }, [metrics]);
 
   return { historyByServer, lastUpdatedAt };
