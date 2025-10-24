@@ -1,4 +1,13 @@
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import type { ServerMetricPoint } from '../types';
 
 type MetricTrendChartProps = {
@@ -10,8 +19,9 @@ type SeriesConfig = {
   key: keyof Pick<ServerMetricPoint, 'cpu_usage' | 'ram_usage' | 'disk_space' | 'temperature'>;
   label: string;
   unit: string;
-  gradientId: string;
   stroke: string;
+  previousStroke: string;
+  badge: string;
 };
 
 const SERIES: SeriesConfig[] = [
@@ -19,43 +29,50 @@ const SERIES: SeriesConfig[] = [
     key: 'cpu_usage',
     label: 'CPU',
     unit: '%',
-    gradientId: 'gradientCpu',
     stroke: '#0ea5e9',
+    previousStroke: 'rgba(14,165,233,0.45)',
+    badge: '%',
   },
   {
     key: 'ram_usage',
     label: 'RAM',
     unit: '%',
-    gradientId: 'gradientRam',
     stroke: '#22d3ee',
+    previousStroke: 'rgba(34,211,238,0.45)',
+    badge: '%',
   },
   {
     key: 'disk_space',
     label: 'Disco',
     unit: '%',
-    gradientId: 'gradientDisk',
     stroke: '#38bdf8',
+    previousStroke: 'rgba(56,189,248,0.45)',
+    badge: '%',
   },
   {
     key: 'temperature',
     label: 'Temperatura',
     unit: '°C',
-    gradientId: 'gradientTemp',
     stroke: '#f97316',
+    previousStroke: 'rgba(249,115,22,0.45)',
+    badge: '°C',
   },
 ];
 
-const buildSeriesData = (history: ServerMetricPoint[]) =>
+const buildSeriesData = (history: ServerMetricPoint[], key: SeriesConfig['key']) =>
   history
     .slice()
     .sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt))
-    .map((point, index) => ({
-      muestra: index + 1,
-      cpu_usage: Number(point.cpu_usage ?? 0),
-      ram_usage: Number(point.ram_usage ?? 0),
-      disk_space: Number(point.disk_space ?? 0),
-      temperature: Number(point.temperature ?? 0),
-    }));
+    .map((point, index, arr) => {
+      const current = Number(point[key] ?? 0);
+      const previous = index > 0 ? Number(arr[index - 1][key] ?? 0) : null;
+      return {
+        muestra: index + 1,
+        actual: current,
+        anterior: previous,
+        delta: previous === null ? 0 : current - previous,
+      };
+    });
 
 const formatValue = (value: number, unit: string) => `${Number(value).toFixed(1)}${unit}`;
 
@@ -87,14 +104,12 @@ export const MetricTrendChart = ({ history, isLoading }: MetricTrendChartProps) 
     );
   }
 
-  const data = buildSeriesData(history);
-
   return (
     <div className="grid gap-4 md:grid-cols-2">
       {SERIES.map((series) => (
         <div
           key={series.key}
-          className="h-80 w-full rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-slate-800/60 dark:bg-slate-900/70"
+          className="relative h-80 w-full rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-slate-800/60 dark:bg-slate-900/70"
         >
           <header className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
             <span>{series.label}</span>
@@ -102,14 +117,14 @@ export const MetricTrendChart = ({ history, isLoading }: MetricTrendChartProps) 
               refresco 30s
             </span>
           </header>
+          <span className="absolute right-6 top-10 text-lg font-semibold text-slate-400 dark:text-slate-500">
+            {series.badge}
+          </span>
           <ResponsiveContainer width="100%" height="90%">
-            <AreaChart data={data} margin={{ left: 10, right: 10, top: 10, bottom: 8 }}>
-              <defs>
-                <linearGradient id={series.gradientId} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={series.stroke} stopOpacity={0.55} />
-                  <stop offset="95%" stopColor={series.stroke} stopOpacity={0.05} />
-                </linearGradient>
-              </defs>
+            <LineChart
+              data={buildSeriesData(history, series.key)}
+              margin={{ left: 10, right: 14, top: 10, bottom: 8 }}
+            >
               <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-slate-800" />
               <XAxis dataKey="muestra" stroke="currentColor" fontSize={11} tickFormatter={(value) => `M${value}`} />
               <YAxis stroke="currentColor" fontSize={11} tickFormatter={(value) => `${value}`} />
@@ -121,19 +136,45 @@ export const MetricTrendChart = ({ history, isLoading }: MetricTrendChartProps) 
                   color: 'white',
                 }}
                 labelStyle={{ color: '#94a3b8' }}
-                formatter={(value: number) => formatValue(value, series.unit)}
-                labelFormatter={(value: number) => `Muestra ${value}`}
+                formatter={(value: number, name: string) => {
+                  if (name === 'delta') {
+                    const diff = Number(value);
+                    const sign = diff > 0 ? '+' : '';
+                    return [`${sign}${diff.toFixed(1)}${series.unit}`, 'Variación'];
+                  }
+                  return [formatValue(value, series.unit), name === 'actual' ? 'Actual' : 'Anterior'];
+                }}
+                labelFormatter={(value: number, payload: any) => {
+                  const entry = Array.isArray(payload) && payload[0] ? payload[0].payload : undefined;
+                  const delta = entry ? Number(entry.delta ?? 0) : 0;
+                  const sign = delta > 0 ? '+' : '';
+                  return `Muestra ${value} (${sign}${delta.toFixed(1)}${series.unit} vs anterior)`;
+                }}
               />
-              <Area
+              <Legend
+                formatter={(value) => (value === 'actual' ? 'Actual' : 'Anterior')}
+                wrapperStyle={{ paddingTop: 6 }}
+                iconType="circle"
+              />
+              <Line
                 type="monotone"
-                dataKey={series.key}
-                stroke={series.stroke}
-                fill={`url(#${series.gradientId})`}
-                strokeWidth={2.2}
-                dot={data.length <= 1}
-                activeDot={{ r: 5, strokeWidth: 0 }}
+                dataKey="anterior"
+                name="Anterior"
+                stroke={series.previousStroke}
+                strokeDasharray="5 6"
+                strokeWidth={2}
+                dot={false}
+                connectNulls
               />
-            </AreaChart>
+              <Line
+                type="monotone"
+                dataKey="actual"
+                name="Actual"
+                stroke={series.stroke}
+                strokeWidth={2.6}
+                activeDot={{ r: 6 }}
+              />
+            </LineChart>
           </ResponsiveContainer>
         </div>
       ))}
