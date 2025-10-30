@@ -1,7 +1,7 @@
-import { API_BASE_URL } from '../../config/env';
+import { API_BASE_URLS } from '../../config/env';
 import type { ServerMetric } from './types';
 
-export const SERVER_METRICS_ENDPOINT = `${API_BASE_URL.replace(/\/$/, '')}/metrics`;
+export const SERVER_METRICS_ENDPOINTS = API_BASE_URLS.map((baseUrl) => `${baseUrl}/metrics`);
 
 export const FALLBACK_METRICS: ServerMetric[] = [
   {

@@ -23,14 +23,18 @@ const formatTimestamp = (iso?: string) => {
 
 export const ServerHealthDashboard = () => {
   const { data, isLoading, isFetching, isError, refetch } = useServerHealthMetrics();
-  const { historyByServer, lastUpdatedAt } = useMetricHistory(data);
+
+  const metrics = data?.metrics ?? [];
+  const isFallback = data?.isFallback ?? false;
+
+  const { historyByServer, lastUpdatedAt } = useMetricHistory(metrics, { persist: !isFallback });
 
   const latestMetricMap = useMemo(() => {
-    if (!data) {
+    if (!metrics || metrics.length === 0) {
       return new Map<string, ServerMetric>();
     }
 
-    return data.reduce((acc, metric) => {
+    return metrics.reduce((acc, metric) => {
       const observedAt = metric.collected_at ? Date.parse(metric.collected_at) : 0;
       const current = acc.get(metric.server_id);
 
@@ -46,9 +50,13 @@ export const ServerHealthDashboard = () => {
 
       return acc;
     }, new Map<string, ServerMetric>());
-  }, [data]);
+  }, [metrics]);
 
-  const serverIds = useMemo(() => Array.from(latestMetricMap.keys()), [latestMetricMap]);
+  const serverIds = useMemo(() => {
+    const ids = Array.from(latestMetricMap.keys());
+    ids.sort((a, b) => a.localeCompare(b));
+    return ids;
+  }, [latestMetricMap]);
 
   const [selectedServerId, setSelectedServerId] = useState<string>();
 
@@ -58,7 +66,12 @@ export const ServerHealthDashboard = () => {
       return;
     }
 
-    setSelectedServerId((current) => current ?? serverIds[0]);
+    setSelectedServerId((current) => {
+      if (!current || !serverIds.includes(current)) {
+        return serverIds[0];
+      }
+      return current;
+    });
   }, [serverIds]);
 
   const activeMetric: ServerMetric | undefined = useMemo(() => {
@@ -72,7 +85,23 @@ export const ServerHealthDashboard = () => {
     return latestMetricMap.get(selectedServerId) ?? fallback;
   }, [latestMetricMap, selectedServerId, serverIds]);
 
-  const chartHistory = selectedServerId ? historyByServer[selectedServerId] ?? [] : [];
+  const chartHistory = useMemo(() => {
+    if (!selectedServerId) {
+      return [];
+    }
+    if (isFallback) {
+      return [];
+    }
+    return historyByServer[selectedServerId] ?? [];
+  }, [historyByServer, isFallback, selectedServerId]);
+  const displayLastUpdated = useMemo(() => {
+    if (isFallback) {
+      return activeMetric?.collected_at ?? lastUpdatedAt;
+    }
+    return lastUpdatedAt ?? activeMetric?.collected_at;
+  }, [activeMetric, isFallback, lastUpdatedAt]);
+
+  const showFallbackNotice = isFallback && !isError;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-5 py-10">
@@ -94,7 +123,9 @@ export const ServerHealthDashboard = () => {
         <div className="flex flex-col items-start gap-3 text-sm text-slate-500 dark:text-slate-400 sm:flex-row sm:items-center sm:gap-6">
           <div>
             <p className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Última actualización</p>
-            <p className="font-medium text-slate-700 dark:text-slate-300">{formatTimestamp(lastUpdatedAt)}</p>
+            <p className="font-medium text-slate-700 dark:text-slate-300">
+              {formatTimestamp(displayLastUpdated)}
+            </p>
           </div>
           <button
             type="button"
@@ -125,12 +156,17 @@ export const ServerHealthDashboard = () => {
                 value={selectedServerId ?? ''}
                 onChange={(event) => setSelectedServerId(event.target.value)}
                 className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                disabled={serverIds.length === 0}
               >
-                {serverIds.map((serverId) => (
-                  <option key={serverId} value={serverId}>
-                    {serverId}
-                  </option>
-                ))}
+                {serverIds.length === 0 ? (
+                  <option value="">Sin datos</option>
+                ) : (
+                  serverIds.map((serverId) => (
+                    <option key={serverId} value={serverId}>
+                      {serverId}
+                    </option>
+                  ))
+                )}
               </select>
             </label>
           </div>
@@ -160,6 +196,16 @@ export const ServerHealthDashboard = () => {
             </div>
           )}
 
+          {showFallbackNotice && (
+            <div className="flex flex-col gap-2 rounded-2xl border border-amber-400/40 bg-amber-500/10 p-4 text-sm text-amber-700 dark:border-amber-300/30 dark:bg-amber-500/10 dark:text-amber-200">
+              <p className="font-semibold">Mostramos datos de respaldo</p>
+              <p>
+                No recibimos métricas en tiempo real del backend. Las cifras visibles son la última lectura disponible
+                o un conjunto de referencia hasta que se reestablezca la conexión.
+              </p>
+            </div>
+          )}
+
           {isLoading && (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {Array.from({ length: 4 }).map((_, index) => (
@@ -175,6 +221,13 @@ export const ServerHealthDashboard = () => {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {!isLoading && !activeMetric && (
+            <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+              No hay lecturas disponibles para este servidor todavía. El panel se actualizará automáticamente al recibir
+              nuevas métricas.
             </div>
           )}
 

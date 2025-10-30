@@ -14,3 +14,8 @@ export interface ServerMetric {
 export interface ServerMetricPoint extends ServerMetric {
   observedAt: string;
 }
+
+export interface ServerHealthSnapshot {
+  metrics: ServerMetric[];
+  isFallback: boolean;
+}

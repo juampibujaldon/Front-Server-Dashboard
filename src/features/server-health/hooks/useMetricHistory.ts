@@ -8,6 +8,10 @@ type StoredHistory = {
   historyByServer: Record<string, ServerMetricPoint[]>;
 };
 
+type UseMetricHistoryOptions = {
+  persist?: boolean;
+};
+
 const getObservedAt = (metric: ServerMetric, fallback: string) =>
   metric.timestamp ?? metric.collected_at ?? metric.updated_at ?? metric.created_at ?? fallback;
 
@@ -101,7 +105,11 @@ const mergeHistory = (
   return { historyByServer: next, lastUpdatedAt: newest };
 };
 
-export const useMetricHistory = (metrics: ServerMetric[] | undefined) => {
+export const useMetricHistory = (
+  metrics: ServerMetric[] | undefined,
+  options: UseMetricHistoryOptions = {},
+) => {
+  const { persist = true } = options;
   const cached = useMemo(readFromStorage, []);
   const [historyByServer, setHistoryByServer] = useState<Record<string, ServerMetricPoint[]>>(
     cached.historyByServer,
@@ -113,6 +121,29 @@ export const useMetricHistory = (metrics: ServerMetric[] | undefined) => {
       return;
     }
 
+    if (!persist) {
+      const mostRecent = metrics.reduce<string | undefined>((latest, metric) => {
+        const observed = getObservedAt(metric, latest ?? new Date().toISOString());
+        if (!observed) {
+          return latest;
+        }
+        if (!latest) {
+          return observed;
+        }
+        return Date.parse(observed) > Date.parse(latest) ? observed : latest;
+      }, undefined);
+
+      if (mostRecent) {
+        setLastUpdatedAt((previous) => {
+          if (!previous) {
+            return mostRecent;
+          }
+          return Date.parse(mostRecent) > Date.parse(previous) ? mostRecent : previous;
+        });
+      }
+      return;
+    }
+
     const fallbackTimestamp = new Date().toISOString();
     setHistoryByServer((previous) => {
       const snapshot = mergeHistory(previous, metrics, fallbackTimestamp);
@@ -120,7 +151,7 @@ export const useMetricHistory = (metrics: ServerMetric[] | undefined) => {
       writeToStorage(snapshot);
       return snapshot.historyByServer;
     });
-  }, [metrics]);
+  }, [metrics, persist]);
 
   return { historyByServer, lastUpdatedAt };
 };

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
   CartesianGrid,
   Legend,
@@ -59,22 +60,16 @@ const SERIES: SeriesConfig[] = [
   },
 ];
 
-const buildSeriesData = (history: ServerMetricPoint[], key: SeriesConfig['key']) =>
-  history
-    .slice()
-    .sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt))
-    .map((point, index, arr) => {
-      const current = Number(point[key] ?? 0);
-      const previous = index > 0 ? Number(arr[index - 1][key] ?? 0) : null;
-      return {
-        muestra: index + 1,
-        actual: current,
-        anterior: previous,
-        delta: previous === null ? 0 : current - previous,
-      };
-    });
-
-const formatValue = (value: number, unit: string) => `${Number(value).toFixed(1)}${unit}`;
+const formatValue = (value: number | null | undefined, unit: string) => {
+  if (value === null || value === undefined) {
+    return `0${unit}`;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return `0${unit}`;
+  }
+  return `${numeric.toFixed(1)}${unit}`;
+};
 
 const ChartSkeleton = ({ label }: { label: string }) => (
   <div className="flex h-80 w-full flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200/60 bg-white/70 p-6 text-center dark:border-slate-800/60 dark:bg-slate-900/60">
@@ -104,80 +99,154 @@ export const MetricTrendChart = ({ history, isLoading }: MetricTrendChartProps) 
     );
   }
 
+  const sortedHistory = useMemo(
+    () =>
+      history
+        .slice()
+        .sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt)),
+    [history],
+  );
+
+  const seriesData = useMemo(() => {
+    return SERIES.reduce(
+      (acc, series) => {
+        let min = Number.POSITIVE_INFINITY;
+        let max = Number.NEGATIVE_INFINITY;
+
+        const dataset = sortedHistory.map((point, index) => {
+          const currentRaw = Number(point[series.key] ?? 0);
+          const previousRaw = index > 0 ? Number(sortedHistory[index - 1][series.key] ?? 0) : null;
+
+          const current = Number.isFinite(currentRaw) ? currentRaw : 0;
+          const previous =
+            previousRaw === null || !Number.isFinite(previousRaw) ? null : previousRaw;
+          const delta = previous === null ? 0 : current - previous;
+
+          if (Number.isFinite(current)) {
+            min = Math.min(min, current);
+            max = Math.max(max, current);
+          }
+
+          if (previous !== null && Number.isFinite(previous)) {
+            min = Math.min(min, previous);
+            max = Math.max(max, previous);
+          }
+
+          return {
+            muestra: index + 1,
+            actual: current,
+            anterior: previous,
+            delta,
+          };
+        });
+
+        acc.set(series.key, {
+          data: dataset,
+          min: min === Number.POSITIVE_INFINITY ? 0 : min,
+          max: max === Number.NEGATIVE_INFINITY ? 0 : max,
+        });
+
+        return acc;
+      },
+      new Map<
+        SeriesConfig['key'],
+        { data: Array<{ muestra: number; actual: number; anterior: number | null; delta: number }>; min: number; max: number }
+      >(),
+    );
+  }, [sortedHistory]);
+
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      {SERIES.map((series) => (
-        <div
-          key={series.key}
-          className="relative h-80 w-full rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-slate-800/60 dark:bg-slate-900/70"
-        >
-          <header className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            <span>{series.label}</span>
-            <span className="rounded-full bg-slate-200/50 px-2 py-0.5 text-[0.65rem] text-slate-500 dark:bg-slate-800/60 dark:text-slate-300">
-              refresco 30s
+      {SERIES.map((series) => {
+        const dataset = seriesData.get(series.key) ?? { data: [], min: 0, max: 0 };
+        const isPercentage = series.unit === '%';
+        const yDomain: [number, number] = isPercentage
+          ? [0, 100]
+          : [
+              Math.min(0, Math.floor(dataset.min / 5) * 5),
+              Math.max(100, Math.ceil(dataset.max / 5) * 5),
+            ];
+
+        return (
+          <div
+            key={series.key}
+            className="relative h-80 w-full rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-slate-800/60 dark:bg-slate-900/70"
+          >
+            <header className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              <span>{series.label}</span>
+              <span className="rounded-full bg-slate-200/50 px-2 py-0.5 text-[0.65rem] text-slate-500 dark:bg-slate-800/60 dark:text-slate-300">
+                refresco 30s
+              </span>
+            </header>
+            <span className="absolute right-6 top-10 text-lg font-semibold text-slate-400 dark:text-slate-500">
+              {series.badge}
             </span>
-          </header>
-          <span className="absolute right-6 top-10 text-lg font-semibold text-slate-400 dark:text-slate-500">
-            {series.badge}
-          </span>
-          <ResponsiveContainer width="100%" height="90%">
-            <LineChart
-              data={buildSeriesData(history, series.key)}
-              margin={{ left: 10, right: 14, top: 10, bottom: 8 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-slate-800" />
-              <XAxis dataKey="muestra" stroke="currentColor" fontSize={11} tickFormatter={(value) => `M${value}`} />
-              <YAxis stroke="currentColor" fontSize={11} tickFormatter={(value) => `${value}`} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(15,23,42,0.92)',
-                  borderRadius: '0.75rem',
-                  border: '1px solid rgba(148,163,184,0.2)',
-                  color: 'white',
-                }}
-                labelStyle={{ color: '#94a3b8' }}
-                formatter={(value: number, name: string) => {
-                  if (name === 'delta') {
-                    const diff = Number(value);
-                    const sign = diff > 0 ? '+' : '';
-                    return [`${sign}${diff.toFixed(1)}${series.unit}`, 'Variación'];
-                  }
-                  return [formatValue(value, series.unit), name === 'actual' ? 'Actual' : 'Anterior'];
-                }}
-                labelFormatter={(value: number, payload: any) => {
-                  const entry = Array.isArray(payload) && payload[0] ? payload[0].payload : undefined;
-                  const delta = entry ? Number(entry.delta ?? 0) : 0;
-                  const sign = delta > 0 ? '+' : '';
-                  return `Muestra ${value} (${sign}${delta.toFixed(1)}${series.unit} vs anterior)`;
-                }}
-              />
-              <Legend
-                formatter={(value) => (value === 'actual' ? 'Actual' : 'Anterior')}
-                wrapperStyle={{ paddingTop: 6 }}
-                iconType="circle"
-              />
-              <Line
-                type="monotone"
-                dataKey="anterior"
-                name="Anterior"
-                stroke={series.previousStroke}
-                strokeDasharray="5 6"
-                strokeWidth={2}
-                dot={false}
-                connectNulls
-              />
-              <Line
-                type="monotone"
-                dataKey="actual"
-                name="Actual"
-                stroke={series.stroke}
-                strokeWidth={2.6}
-                activeDot={{ r: 6 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      ))}
+            <ResponsiveContainer width="100%" height="90%">
+              <LineChart data={dataset.data} margin={{ left: 10, right: 14, top: 10, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-slate-800" />
+                <XAxis
+                  dataKey="muestra"
+                  stroke="currentColor"
+                  fontSize={11}
+                  tickFormatter={(value) => `M${value}`}
+                />
+                <YAxis
+                  stroke="currentColor"
+                  fontSize={11}
+                  domain={yDomain}
+                  tickFormatter={(value) => `${value}`}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'rgba(15,23,42,0.92)',
+                    borderRadius: '0.75rem',
+                    border: '1px solid rgba(148,163,184,0.2)',
+                    color: 'white',
+                  }}
+                  labelStyle={{ color: '#94a3b8' }}
+                  formatter={(value: number, name: string) => {
+                    if (name === 'delta') {
+                      const diff = Number(value);
+                      const sign = diff > 0 ? '+' : '';
+                      return [`${sign}${diff.toFixed(1)}${series.unit}`, 'Variación'];
+                    }
+                    return [formatValue(value, series.unit), name === 'actual' ? 'Actual' : 'Anterior'];
+                  }}
+                  labelFormatter={(value: number, payload: any) => {
+                    const entry = Array.isArray(payload) && payload[0] ? payload[0].payload : undefined;
+                    const delta = entry ? Number(entry.delta ?? 0) : 0;
+                    const sign = delta > 0 ? '+' : '';
+                    return `Muestra ${value} (${sign}${delta.toFixed(1)}${series.unit} vs anterior)`;
+                  }}
+                />
+                <Legend
+                  formatter={(value) => (value === 'actual' ? 'Actual' : 'Anterior')}
+                  wrapperStyle={{ paddingTop: 6 }}
+                  iconType="circle"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="anterior"
+                  name="Anterior"
+                  stroke={series.previousStroke}
+                  strokeDasharray="5 6"
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls
+                />
+                <Line
+                  type="monotone"
+                  dataKey="actual"
+                  name="Actual"
+                  stroke={series.stroke}
+                  strokeWidth={2.6}
+                  activeDot={{ r: 6 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })}
     </div>
   );
 };

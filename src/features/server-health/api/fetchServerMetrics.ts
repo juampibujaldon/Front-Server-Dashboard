@@ -1,5 +1,5 @@
-import { FALLBACK_METRICS, SERVER_METRICS_ENDPOINT } from '../constants';
-import type { ServerMetric } from '../types';
+import { FALLBACK_METRICS, SERVER_METRICS_ENDPOINTS } from '../constants';
+import type { ServerHealthSnapshot, ServerMetric } from '../types';
 
 const generateId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -8,13 +8,19 @@ const generateId = () => {
   return `metric-${Math.random().toString(36).slice(2, 10)}`;
 };
 
+const clamp = (value: number, { min, max }: { min: number; max: number }) =>
+  Math.min(max, Math.max(min, value));
+
+const normalizePercentage = (value: number) => clamp(value, { min: 0, max: 100 });
+const normalizeTemperature = (value: number) => clamp(value, { min: -20, max: 120 });
+
 const sanitizeMetric = (metric: Partial<ServerMetric>): ServerMetric => ({
-  cpu_usage: Number(metric.cpu_usage ?? 0),
-  disk_space: Number(metric.disk_space ?? 0),
+  cpu_usage: normalizePercentage(Number(metric.cpu_usage ?? 0)),
+  disk_space: normalizePercentage(Number(metric.disk_space ?? 0)),
   id: String(metric.id ?? generateId()),
-  ram_usage: Number(metric.ram_usage ?? 0),
+  ram_usage: normalizePercentage(Number(metric.ram_usage ?? 0)),
   server_id: String(metric.server_id ?? 'desconocido'),
-  temperature: Number(metric.temperature ?? 0),
+  temperature: normalizeTemperature(Number(metric.temperature ?? 0)),
   created_at: metric.created_at,
   updated_at: metric.updated_at,
   collected_at: metric.collected_at,
@@ -61,38 +67,62 @@ const sortByObservedAt = (metrics: ServerMetric[]) =>
       return aTime - bTime;
     });
 
-export const fetchServerHealthMetrics = async (signal?: AbortSignal): Promise<ServerMetric[]> => {
+export const fetchServerHealthMetrics = async (
+  signal?: AbortSignal,
+): Promise<ServerHealthSnapshot> => {
   try {
-    const response = await fetch(SERVER_METRICS_ENDPOINT, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      signal,
-    });
+    let lastError: unknown;
 
-    if (!response.ok) {
-      throw new Error(`Solicitud fallida con estado ${response.status}`);
+    for (const endpoint of SERVER_METRICS_ENDPOINTS) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store',
+          signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Solicitud fallida con estado ${response.status}`);
+        }
+
+        const payload = await response.json();
+        if (!Array.isArray(payload)) {
+          throw new Error('La respuesta del backend no es una lista de métricas');
+        }
+
+        const uniqueById = new Map<string, ServerMetric>();
+        payload.forEach((item) => {
+          const normalized = withObservedTimestamp(sanitizeMetric(item));
+          uniqueById.set(normalized.id, normalized);
+        });
+
+        return {
+          metrics: sortByObservedAt(Array.from(uniqueById.values())),
+          isFallback: false,
+        };
+      } catch (attemptError) {
+        if (signal?.aborted) {
+          throw attemptError;
+        }
+        console.warn(`[server-health] Error consultando ${endpoint}`, attemptError);
+        lastError = attemptError;
+        continue;
+      }
     }
 
-    const payload = await response.json();
-    if (!Array.isArray(payload)) {
-      throw new Error('La respuesta del backend no es una lista de métricas');
-    }
-
-    const uniqueById = new Map<string, ServerMetric>();
-    payload.forEach((item) => {
-      const normalized = withObservedTimestamp(sanitizeMetric(item));
-      uniqueById.set(normalized.id, normalized);
-    });
-
-    return sortByObservedAt(Array.from(uniqueById.values()));
+    throw lastError ?? new Error('No pudimos obtener métricas del backend');
   } catch (error) {
     if (signal?.aborted) {
       throw error;
     }
 
     console.warn('[server-health] Fallback a métricas simuladas por error en la API', error);
-    return handleFallback();
+    return {
+      metrics: handleFallback(),
+      isFallback: true,
+    };
   }
 };
